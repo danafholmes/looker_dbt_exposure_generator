@@ -14,12 +14,14 @@ Generate a catalog.json file
 ```
 $ cd your/dbt/dir
 $ dbt docs generate
-$ cp ./compiled/catalog.json /directory/where/you/cloned/the/repo
+$ cp ./compiled/catalog.json /directory/where/you/cloned/the/repo/
 
 ```
 Run the application
 
-python generate_exposure_from_dash.py DASHBOARD_ID
+```
+$ cd /directory/where/you/cloned/the/repo/
+$ python generate_exposure_from_dash.py DASHBOARD_ID
 
 Caveats:
 

@@ -14,7 +14,7 @@ Generate a catalog.json file
 ```
 $ cd your/dbt/dir
 $ dbt docs generate
-$ cp ./compiled/catalog.json /directory/where/you/cloned/the/repo/
+$ cp ./target/catalog.json /directory/where/you/cloned/the/repo/
 
 ```
 Run the application

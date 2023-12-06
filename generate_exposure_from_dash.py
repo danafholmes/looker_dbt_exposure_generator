@@ -1,8 +1,40 @@
 import looker_sdk
+import yaml
+import json
 from bigquery_sql_parser.query import Query as ParseBigQuery
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
 sdk = looker_sdk.init40("looker.ini")
+
+def parse_manifest():
+
+    dbt_objects_dict = {}
+
+    with open('catalog.json') as f:
+        data = json.load(f)
+
+        for node in data["nodes"]:
+            node_type = node.split('.')[0]
+            node_project = node.split('.')[1]
+            node_name = node.split('.')[2]
+            node_jinja = f"ref('{node_name}')"
+
+            node_metadata = {
+                'node_type': node_type,
+                'node_project': node_project,
+                'node_name': node_name,
+                'node_jinja': node_jinja
+            }
+
+            sql_object_type = data["nodes"][node]["metadata"]["type"]
+            sql_database = data["nodes"][node]["metadata"]["database"]
+            sql_schema = data["nodes"][node]["metadata"]["schema"]
+            sql_name = data["nodes"][node]["metadata"]["name"]
+            sql_full_name = f"{sql_database}.{sql_schema}.{sql_name}"
+
+            dbt_objects_dict[sql_full_name] = node_metadata
+
+    return dbt_objects_dict
 
 class Dashboard:
     def __init__(self, id):
@@ -11,6 +43,7 @@ class Dashboard:
         self.creator = None
         self.url = None
         self.sql_table_names = []
+        self.exposure = {}
     def get_metadata(self):
         dashboard = sdk.dashboard(dashboard_id=self.id)
         self.title = dashboard.title
@@ -58,7 +91,34 @@ if __name__ == "__main__":
     my_dash = Dashboard(args["dashboard_id"])
     my_dash.get_metadata()
 
-    print(f"Dashboard Name {my_dash.title}")
-    print(f"Dashboard Creator {my_dash.creator}")
-    print(f"Dashboard URL {my_dash.url}")
-    print(f"Dashboard SQL Table Names {my_dash.sql_table_names}")
+    dbt_objects = parse_manifest()
+
+    depends_on = []
+
+    for table in my_dash.sql_table_names:
+        node_jinja = dbt_objects[table]["node_jinja"]
+        depends_on.append(node_jinja)
+
+
+    exposure = {
+        'name': args["dashboard_id"],
+        'label': my_dash.title,
+        'type': 'dashboard',
+        'url': my_dash.url,
+        'owner': {'name': my_dash.creator},
+        'depends_on': depends_on
+    }
+
+    exposures = []
+    exposures.append(exposure)
+
+    exposures_json = {
+        'version': 2,
+        'exposures': exposures
+    }
+
+
+    print(exposures_json)
+    yaml_output = yaml.dump(exposures_json, sort_keys=False) 
+    print(yaml_output)
+

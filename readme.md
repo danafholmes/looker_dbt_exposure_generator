@@ -1,14 +1,31 @@
-Instructions - 
+Instructions
 
-Instal pip requirements
+Clone the repo to your local machine
 
-Create a looker.ini file according to the directions in the looker sdk
+Install requirements:
 
+```
+$ pip install -r requirements.txt
+```
+Create a [looker.ini file](https://developers.looker.com/api/getting-started)
+
+Generate a catalog.json file
+
+```
+$ cd your/dbt/dir
+$ dbt docs generate
+$ cp ./compiled/catalog.json /directory/where/you/cloned/the/repo
+
+```
 Run the application
 
-python get_sql_tables.py DASHBOARD_ID
+python generate_exposure_from_dash.py DASHBOARD_ID
 
-To do:
+Caveats:
 
-Parse catalog.json file from dbt and generate dictionary of table names with corresponding model names
-Create exposures yaml code
+- SQL parser used is specific to BigQuery. Maybe it will work on other SQL dialects. Probably not. Wanna use it on a Looker project on a different dialect? Find a python SQL parser library for your database and figure it out
+
+To Do: 
+
+- Add ability to parse a look
+- Add ability to pass multiple dashboards to be parsed or a directory to parse all dashboards from that directory

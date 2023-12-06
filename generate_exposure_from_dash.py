@@ -47,7 +47,10 @@ class Dashboard:
     def get_metadata(self):
         dashboard = sdk.dashboard(dashboard_id=self.id)
         self.title = dashboard.title
-        self.creator = dashboard.user_name
+        if dashboard.user_name == None or dashboard.user_name == '':
+            self.creator = 'LookML Developers'
+        else:
+            self.creator = dashboard.user_name
         self.url = dashboard.url
 
         queries = []
@@ -117,8 +120,6 @@ if __name__ == "__main__":
         'exposures': exposures
     }
 
-
-    print(exposures_json)
     yaml_output = yaml.dump(exposures_json, sort_keys=False) 
     print(yaml_output)
 

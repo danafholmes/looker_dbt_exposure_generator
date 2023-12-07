@@ -58,7 +58,7 @@ class Folder:
         for look in looks:
             self.looks.append(look["id"])
 
-class Look:
+class LookerObject:
     def __init__(self, id):
         self.id = id
         self.title = None
@@ -67,30 +67,7 @@ class Look:
         self.sql_table_names = []
         self.exposure = {}
         self.models_not_found = []
-        self.look_found = True
-    def get_metadata(self):
-        look = next(iter(sdk.search_looks(id=self.id)), None)
-        if not look:
-            self.look_found = False
-            return
-        self.title = look.title
-        if look.user_name == None or dashboard.user_name == '':
-            self.creator = 'Unknown'
-        else:
-            self.creator = look.user_id
-        self.url = look.url
-
-        if look.query != None:
-            query_sql = sdk.run_query(
-                query_id = look.query["query_id"],
-                result_format = "sql"
-            )
-            parsed_query = ParseBigQuery(query_sql)
-            table_ids = parsed_query.full_table_ids
-            self.sql_table_names.extend(table_ids)
-        #dedupe list
-        self.sql_table_names = list(dict.fromkeys(self.sql_table_names))
-
+        self.object_found = True
     def generate_exposure(self, dbt_objects):
         depends_on = []
 
@@ -117,19 +94,41 @@ class Look:
                 'url': self.url,
                 'owner': {'name': self.creator},
                 'depends_on': depends_on
-            }
+        }
+
+class Look(LookerObject):
+    def __init__(self, id):
+        super().__init__(id)
+        self.object_type = 'look'
+    def get_metadata(self):
+        look = next(iter(sdk.search_looks(id=self.id)), None)
+        if not look:
+            self.object_found = False
+            return
+        look = sdk.look(look_id=self.id)
+        self.title = look.title
+        if look.user_id== None or look.user_id == '':
+            self.creator = 'Unknown'
+        else:
+            self.creator = look.user_id
+        self.url = look.short_url
+
+        if look.query != None:
+            query_sql = sdk.run_query(
+                query_id = look.query["id"],
+                result_format = "sql"
+            )
+            parsed_query = ParseBigQuery(query_sql)
+            table_ids = parsed_query.full_table_ids
+            self.sql_table_names.extend(table_ids)
+        #dedupe list
+        self.sql_table_names = list(dict.fromkeys(self.sql_table_names))
     
 
-class Dashboard:
+class Dashboard(LookerObject):
     def __init__(self, id):
-        self.id = id
-        self.title = None
-        self.creator = None
-        self.url = None
-        self.sql_table_names = []
-        self.exposure = {}
-        self.models_not_found = []
-        self.dashboard_found = True
+        super().__init__(id)
+        self.object_type = 'dashboard'
     def get_metadata(self):
         dashboard = next(iter(sdk.search_dashboards(id=self.id)), None)
         ## lookml dashboards don't seem to show up in search
@@ -137,10 +136,10 @@ class Dashboard:
             try:
                 dashboard = sdk.dashboard(dashboard_id=self.id)
             except:
-                self.dashboard_found = False
+                self.object_found = False
                 return
         elif not dashboard:
-            self.dashboard_found = False
+            self.object_found = False
             return
         self.title = dashboard.title
         if dashboard.user_name == None or dashboard.user_name == '':
@@ -180,42 +179,13 @@ class Dashboard:
         #dedupe list
         self.sql_table_names = list(dict.fromkeys(self.sql_table_names))
 
-    def generate_exposure(self, dbt_objects):
-        depends_on = []
-
-        for table in self.sql_table_names:
-            try:
-                node_jinja = dbt_objects[table]["node_jinja"]
-                depends_on.append(node_jinja)
-            except KeyError:
-                self.models_not_found.append({'table':table,'type':'dashboard','content_id':self.id})
-
-        if len(depends_on) < 1:
-            self.exposure = {
-                'name': self.id,
-                'label': self.title,
-                'type': 'dashboard',
-                'url': self.url,
-                'owner': {'name': self.creator},
-            }
-        else:
-            self.exposure = {
-                'name': self.id,
-                'label': self.title,
-                'type': 'dashboard',
-                'url': self.url,
-                'owner': {'name': self.creator},
-                'depends_on': depends_on
-            }
-
-
-
-
 if __name__ == "__main__":
 
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument("-d", "--dashboard", nargs="+", help="Looker Dashboard IDs")
+    parser.add_argument("-l", "--look", nargs="+", help="Looker Look IDs")
     parser.add_argument("-f", "--folder", nargs="+", help="Looker Folder IDs")
+    parser.add_argument("-a", "--all", action='store_true', help="Process all content (Dashboards and Looks) in a given folder. Default is to just process Dashboards and ignore Looks.")
 
 
     args = vars(parser.parse_args())
@@ -225,12 +195,16 @@ if __name__ == "__main__":
     exposures = []
     exposures_with_no_models= []
     dashboards = []
+    looks = []
     if args["dashboard"] != None:
         dashboards.extend(args["dashboard"])
+    if args["look"] != None:
+        looks.extend(args["look"])
     folders = []
     if args["folder"] != None:
         folders.extend(args["folder"])
     dashboards_not_found = []
+    looks_not_found = []
     models_not_found = [] 
     folders_not_found = []
 
@@ -242,11 +216,14 @@ if __name__ == "__main__":
         else:
             folder.get_dashboards_in_folder()
             dashboards.extend(folder.dashboards)
+            if args["all"] == True:
+                folder.get_looks_in_folder()
+                looks.extend(folder.looks)
 
     for dashboard in dashboards:
         dashboard = Dashboard(dashboard)
         dashboard.get_metadata()
-        if dashboard.dashboard_found == False:
+        if dashboard.object_found == False:
             dashboards_not_found.append(dashboard.id)
             continue
         else:
@@ -256,6 +233,19 @@ if __name__ == "__main__":
             else:
                 exposures_with_no_models.append(dashboard.exposure)
             models_not_found.extend(dashboard.models_not_found)
+    for look in looks:
+        look = Look(look)
+        look.get_metadata()
+        if look.object_found == False:
+            looks_not_found.append(look.id)
+            continue
+        else:
+            look.generate_exposure(dbt_objects)
+            if "depends_on" in look.exposure:
+                exposures.append(look.exposure)
+            else:
+                exposures_with_no_models.append(look.exposure)
+            models_not_found.extend(look.models_not_found)
 
     exposures_json = {
         'version': 2,
@@ -281,6 +271,16 @@ if __name__ == "__main__":
         print('Could not resolve the following folders:')
         for folder in folders_not_found:
             print(f"- Folder ID: {folder}")
+        print('-----')
+    if len(looks_not_found) > 0:
+        print('-----')
+        print('Could not resolve the following Looks:')
+        for look in looks_not_found:
+            print(f"- Look ID: {look}")
+        print('Verify that:')
+        print('- Your looker.ini file has the correct credentials and that you can access the API succesfully.')
+        print('- The user account and permission level associated with your API credential can access the look.')
+        print('- The look exists and there are no typos in the name.')
         print('-----')
     if len(dashboards_not_found) > 0:
         print('-----')

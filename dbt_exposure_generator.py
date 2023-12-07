@@ -40,18 +40,84 @@ class Folder:
     def __init__(self, id):
         self.id = id
         self.dashboards = []
+        self.looks = []
         self.folder_found = True
-    def get_dashboards_in_folder(self):
+
         folder = next(iter(sdk.search_folders(id=self.id)), None)
         ## the 'lookml' folder is a pseudo-folder that contains all lookml dashboards
         ## it isn't found when searching folders, but it always exists, so we can bypass the check for it
         if not folder and self.id != 'lookml':
             self.folder_found = False
             return
+    def get_dashboards_in_folder(self):
         dashboards = sdk.folder_dashboards(folder_id=self.id, fields="id")
         for dashboard in dashboards:
             self.dashboards.append(dashboard["id"])
+    def get_looks_in_folder(self):
+        looks = sdk.folder_looks(folder_id=self.id, fields="id")
+        for look in looks:
+            self.looks.append(look["id"])
 
+class Look:
+    def __init__(self, id):
+        self.id = id
+        self.title = None
+        self.creator = None
+        self.url = None
+        self.sql_table_names = []
+        self.exposure = {}
+        self.models_not_found = []
+        self.look_found = True
+    def get_metadata(self):
+        look = next(iter(sdk.search_looks(id=self.id)), None)
+        if not look:
+            self.look_found = False
+            return
+        self.title = look.title
+        if look.user_name == None or dashboard.user_name == '':
+            self.creator = 'Unknown'
+        else:
+            self.creator = look.user_id
+        self.url = look.url
+
+        if look.query != None:
+            query_sql = sdk.run_query(
+                query_id = look.query["query_id"],
+                result_format = "sql"
+            )
+            parsed_query = ParseBigQuery(query_sql)
+            table_ids = parsed_query.full_table_ids
+            self.sql_table_names.extend(table_ids)
+        #dedupe list
+        self.sql_table_names = list(dict.fromkeys(self.sql_table_names))
+
+    def generate_exposure(self, dbt_objects):
+        depends_on = []
+
+        for table in self.sql_table_names:
+            try:
+                node_jinja = dbt_objects[table]["node_jinja"]
+                depends_on.append(node_jinja)
+            except KeyError:
+                self.models_not_found.append({'table':table,'type':'dashboard','content_id':self.id})
+
+        if len(depends_on) < 1:
+            self.exposure = {
+                'name': self.id,
+                'label': self.title,
+                'type': 'dashboard',
+                'url': self.url,
+                'owner': {'name': self.creator},
+            }
+        else:
+            self.exposure = {
+                'name': self.id,
+                'label': self.title,
+                'type': 'dashboard',
+                'url': self.url,
+                'owner': {'name': self.creator},
+                'depends_on': depends_on
+            }
     
 
 class Dashboard:
@@ -157,6 +223,7 @@ if __name__ == "__main__":
     dbt_objects = parse_manifest()
 
     exposures = []
+    exposures_with_no_models= []
     dashboards = []
     if args["dashboard"] != None:
         dashboards.extend(args["dashboard"])
@@ -165,11 +232,16 @@ if __name__ == "__main__":
         folders.extend(args["folder"])
     dashboards_not_found = []
     models_not_found = [] 
+    folders_not_found = []
 
     for folder in folders:
         folder=Folder(folder)
-        folder.get_dashboards_in_folder()
-        dashboards.extend(folder.dashboards)
+        if folder.folder_found == False:
+            folders_not_found.append(folder.id)
+            continue
+        else:
+            folder.get_dashboards_in_folder()
+            dashboards.extend(folder.dashboards)
 
     for dashboard in dashboards:
         dashboard = Dashboard(dashboard)
@@ -179,7 +251,10 @@ if __name__ == "__main__":
             continue
         else:
             dashboard.generate_exposure(dbt_objects)
-            exposures.append(dashboard.exposure)
+            if "depends_on" in dashboard.exposure:
+                exposures.append(dashboard.exposure)
+            else:
+                exposures_with_no_models.append(dashboard.exposure)
             models_not_found.extend(dashboard.models_not_found)
 
     exposures_json = {
@@ -187,17 +262,28 @@ if __name__ == "__main__":
         'exposures': exposures
     }
 
-    yaml_output = yaml.dump(exposures_json, sort_keys=False) 
-
-    print(yaml_output)
+    if len(exposures_json["exposures"])>0:
+        yaml_output = yaml.dump(exposures_json, sort_keys=False) 
+        print(yaml_output)
+    else:
+        print("No exposures generated!")
 
     if len(models_not_found) > 0:
+        print('-----')
         print('Could not resolve dbt models for the follwing tables/views:')
         for model in models_not_found:
             print(f"- Content ID: {model['content_id']}; Content Type: {model['type']}; Table Name: {model['table']}")
         print('Verify that your catalog.json file is up to date and in the same folder as this program.')
         print('If the model still cannot be resolved, the table may be generated by a different dbt project or a different tool altogether.')
+        print('-----')
+    if len(folders_not_found) > 0:
+        print('-----')        
+        print('Could not resolve the following folders:')
+        for folder in folders_not_found:
+            print(f"- Folder ID: {folder}")
+        print('-----')
     if len(dashboards_not_found) > 0:
+        print('-----')
         print('Could not resolve the following dashboards:')
         for dashboard in dashboards_not_found:
             print(f"- Dashboard ID: {dashboard}")
@@ -205,5 +291,13 @@ if __name__ == "__main__":
         print('- Your looker.ini file has the correct credentials and that you can access the API succesfully.')
         print('- The user account and permission level associated with your API credential can access the dashboard.')
         print('- The dashboard exists and there are no typos in the name.')
+        print('-----')
+    if len(exposures_with_no_models) > 0:
+        print('-----')
+        print("These generated exposures didn't have any dbt models associated with them - there's no benefit to including them in your dbt project, but here they are in case you want them for something:")
+        yaml_output = yaml.dump(exposures_with_no_models, sort_keys=False) 
+        print(yaml_output)
+        print('-----')
+
 
 
